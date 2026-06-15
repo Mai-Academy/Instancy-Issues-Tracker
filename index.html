@@ -257,6 +257,12 @@ input,select,textarea{font-family:inherit;font-size:13px;color:var(--text)}
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
           <input class="search-input" id="search" placeholder="Search issues, tickets, notes…" oninput="renderList()">
         </div>
+        <select id="sort-select" title="Sort order" onchange="window._currentSort=this.value;renderList()" style="padding:7px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);outline:none;color:var(--text2);font-size:12px;cursor:pointer;flex-shrink:0">
+          <option value="newest">Newest → Oldest</option>
+          <option value="oldest">Oldest → Newest</option>
+          <option value="az">A → Z</option>
+          <option value="za">Z → A</option>
+        </select>
       </div>
       <div class="filter-row">
         <!-- STATUS multi-select -->
@@ -471,6 +477,12 @@ function fmtShort(iso) {
 }
 
 let issues = load();
+  // Sort
+  const _sort = window._currentSort || 'newest';
+  if (_sort === 'newest') issues.sort((a,b) => new Date(b.updatedAt||b.createdAt) - new Date(a.updatedAt||a.createdAt));
+  else if (_sort === 'oldest') issues.sort((a,b) => new Date(a.createdAt||a.updatedAt) - new Date(b.createdAt||b.updatedAt));
+  else if (_sort === 'az') issues.sort((a,b) => a.title.localeCompare(b.title));
+  else if (_sort === 'za') issues.sort((a,b) => b.title.localeCompare(a.title));
 let activeId = null;
 let activeLogTab = 'quick';
 
@@ -721,7 +733,8 @@ function renderDetail() {
       </div>
       ${activeLogTab === 'quick' ? `
       <div class="log-quick">
-        <textarea id="quick-text" placeholder="Type a note and press Log… (Ctrl+Enter to submit)"></textarea>
+        <textarea id="quick-text" placeholder="Type a note and press Log… (Ctrl+Enter to submit)" onpaste="handleImagePaste(event)"></textarea>
+        <div id="paste-preview" class="paste-preview" style="display:none;flex-wrap:wrap;gap:6px;margin:6px 0 0;padding:6px;background:var(--surface2);border-radius:var(--radius);border:1px solid var(--border)"></div>
         <div class="log-quick-right">
           <select class="form-input" id="quick-from" style="width:120px">
             <option value="ph">PH</option>
@@ -830,8 +843,9 @@ function renderTimeline(issue) {
           <span class="tl-chevron${collapsed ? '' : ' open'}">▾</span>
         </div>
         <div class="tl-body-content${collapsed ? ' collapsed' : ''}">
-          <div class="tl-card ${type}" style="margin-top:6px">
-            <div class="tl-text">${escHtml(entry.text)}</div>
+          <div class="tl-card ${type}" style="margin-top:6px" data-entry-id="${entry.id}">
+            <button class="tl-edit-btn" onclick="editEntry(issue.id, entry.id)" style="float:right;margin:-2px 0 4px 8px;padding:2px 9px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text2);cursor:pointer;opacity:0.7" onmouseenter="this.style.opacity=1;this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseleave="this.style.opacity=0.7;this.style.borderColor='var(--border)';this.style.color='var(--text2)'">Edit</button>
+          <div class="tl-text">${escHtml(entry.text)}</div>
             ${(entry.images||[]).length
               ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">${entry.images.map(src=>`<img src="${src}" style="max-width:100%;max-height:320px;border-radius:6px;border:1px solid var(--border);cursor:pointer" onclick="window.open('${src}','_blank')" title="Click to open full size">`).join('')}</div>`
               : ''}
@@ -1185,6 +1199,71 @@ document.addEventListener('keydown', e => {
 })();
 
 // ─── BOOT ────────────────────────────────────────────────────
+
+// ─── SORT STATE ──────────────────────────────────────────────
+window._currentSort = 'newest';
+
+// ─── TIMELINE ENTRY EDITING ───────────────────────────────────
+function editEntry(issueId, entryId) {
+  const card = document.querySelector('[data-entry-id="' + entryId + '"]');
+  if (!card) return;
+  const textEl = card.querySelector('.tl-text');
+  if (!textEl || card.querySelector('.entry-edit-wrap')) return;
+  const current = textEl.textContent;
+  textEl.style.display = 'none';
+  const ta = document.createElement('textarea');
+  ta.value = current;
+  ta.style.cssText = 'width:100%;min-height:100px;padding:8px;border:1px solid var(--accent);border-radius:var(--radius);font-size:13px;line-height:1.6;font-family:inherit;resize:vertical;outline:none;margin-bottom:4px';
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:6px;justify-content:flex-end;margin-top:4px';
+  btnRow.innerHTML = '<button onclick="cancelEditEntry(\''+entryId+'\')" style="padding:4px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);cursor:pointer;font-size:12px">Cancel</button>' +
+    '<button onclick="saveEntry(\''+issueId+'\',\''+entryId+'\',this)" style="padding:4px 12px;border:none;border-radius:var(--radius);background:var(--accent);color:#fff;cursor:pointer;font-size:12px">Save</button>';
+  const wrap = document.createElement('div');
+  wrap.className = 'entry-edit-wrap';
+  wrap.appendChild(ta);
+  wrap.appendChild(btnRow);
+  textEl.insertAdjacentElement('afterend', wrap);
+  ta.focus();
+}
+
+function cancelEditEntry(entryId) {
+  const card = document.querySelector('[data-entry-id="' + entryId + '"]');
+  if (!card) return;
+  const textEl = card.querySelector('.tl-text');
+  const wrap = card.querySelector('.entry-edit-wrap');
+  if (textEl) textEl.style.display = '';
+  if (wrap) wrap.remove();
+}
+
+function saveEntry(issueId, entryId) {
+  const card = document.querySelector('[data-entry-id="' + entryId + '"]');
+  if (!card) return;
+  const wrap = card.querySelector('.entry-edit-wrap');
+  const ta = wrap ? wrap.querySelector('textarea') : null;
+  if (!ta) return;
+  const newText = ta.value.trim();
+  if (!newText) return;
+  const issues = load();
+  const issue = issues.find(i => i.id === issueId);
+  if (!issue) return;
+  const entry = issue.timeline.find(e => e.id === entryId);
+  if (!entry) return;
+  entry.text = newText;
+  entry.editedAt = new Date().toISOString();
+  save(issues);
+  const textEl = card.querySelector('.tl-text');
+  if (textEl) { textEl.textContent = newText; textEl.style.display = ''; }
+  if (!card.querySelector('.tl-edited')) {
+    const badge = document.createElement('span');
+    badge.className = 'tl-edited';
+    badge.textContent = ' (edited)';
+    badge.style.cssText = 'font-size:10px;color:var(--text3)';
+    const when = card.querySelector('.tl-when');
+    if (when) when.appendChild(badge);
+  }
+  if (wrap) wrap.remove();
+}
+
 renderList();
 
 </script>
